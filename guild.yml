@@ -1,0 +1,8 @@
+- model: hrnet 
+  operations:
+    train:
+      flags:
+        hrnet_pretrained: False
+        hrnet_width: 32
+        dataset: 'musdb'
+        task: 'separation'

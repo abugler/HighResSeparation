@@ -1,0 +1,6 @@
+audio_dir: /home/andreas/openmic-data/audio
+tags_file: /home/andreas/openmic-data/openmic-2018-aggregated-labels.csv
+train_split_file: /home/andreas/openmic-2018/split01_train.csv
+test_split_file:  /home/andreas/openmic-2018/split01_test.csv
+val_split_file: /home/andreas/openmic-2018/split01_valid.csv
+class_map_file: /home/andreas/openmic-data/class-map.json

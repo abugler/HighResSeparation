@@ -1,0 +1,5 @@
+audio_root: /media/CHONK/mtg-jamendo-dataset/audio
+metadata_root: /media/CHONK/mtg-jamendo-dataset/data
+split_num: 0
+tag_type: top50tags
+audio_duration: 28.848

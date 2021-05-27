@@ -1,0 +1,7 @@
+guildai
+torch
+numpy
+timm
+Pillow
+nussl
+tqdm

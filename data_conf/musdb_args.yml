@@ -1,0 +1,5 @@
+folder: /home/andreas/musdb
+is_wav: false
+excerpt_duration: 10
+hop_duration: 1
+num_tracks: 86
