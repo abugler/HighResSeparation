@@ -4,3 +4,4 @@ train_split_file: /home/andreas/openmic-2018/split01_train.csv
 test_split_file:  /home/andreas/openmic-2018/split01_test.csv
 val_split_file: /home/andreas/openmic-2018/split01_valid.csv
 class_map_file: /home/andreas/openmic-data/class-map.json
+audio_duration: 10.0
