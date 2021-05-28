@@ -29,10 +29,12 @@ class SegmentedMUSDB(nussl.datasets.BaseDataset):
     """
     def __init__(self, folder='', is_wav=False, excerpt_duration=10, hop_duration=0,
                  num_tracks=None, subsets=None, split=None, **kwargs):
+        self.sample_rate = 44_100
         self.excerpt_duration = excerpt_duration
-        self.excerpt_length = int(44_100 * excerpt_duration)
+        self.excerpt_length = int(self.sample_rate * excerpt_duration)
         self.hop_duration = hop_duration
         self.num_tracks = num_tracks
+        self.num_classes = 4
 
         subsets = ['train', 'test'] if subsets is None else subsets
         self.musdb = musdb_sigsep.DB(root=folder, is_wav=is_wav, download=False, 
@@ -120,12 +122,16 @@ class SegmentedMUSDB(nussl.datasets.BaseDataset):
     def process_item(self, item):
         mix, sources = self.musdb_track_to_audio_signals(item)
         self._setup_audio_signal(mix)
-        for source in list(sources.values()):
+        source_names = sorted(list(sources.values()))
+        source_audio = []
+        for source in source_names:
             self._setup_audio_signal(source)
-        
+            source_audio.append(source.audio_data)
+
+        source_audio_data = np.stack(source_audio, axis=-1)
         output = {
-            'mix': mix,
-            'sources': sources,
+            'mix_audio': mix.audio_data,
+            'source_audio': source_audio_data,
             'metadata': {
                 'labels': ['bass', 'drums', 'other', 'vocals']
             }

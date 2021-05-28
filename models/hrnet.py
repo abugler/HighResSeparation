@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import timm
 from timm.models.hrnet import _BN_MOMENTUM
 from nussl import STFTParams
-from nussl.ml.networks.modules import STFT
+from nussl.ml.networks.modules import STFT, AmplitudeToDB
 
 ALIGN_CORNERS = None
 
@@ -28,7 +28,7 @@ class HRNetV2LastLayer(nn.Module):
                                kernel_size=3, stride=2, padding=1, bias=False),
             nn.BatchNorm2d(last_inp_channels, momentum=_BN_MOMENTUM),
             nn.ConvTranspose2d(last_inp_channels, last_inp_channels,
-                               kernel_size=3, stride=2, padding=1, bias=False),
+                               kernel_size=3, stride=2, padding=0, bias=False),
             nn.BatchNorm2d(last_inp_channels, momentum=_BN_MOMENTUM),
             nn.ReLU()
         )
@@ -97,24 +97,32 @@ class HRNet(nn.Module):
                  audio_channels : int = 1):
         super().__init__()
 
-        head = 'classification' if separate else 'separation'
+        head = 'separation' if separate else 'classification'
+        self.num_classes = num_classes
+        self.audio_channels = audio_channels
         self.hrnet = timm.create_model(
             f'hrnet_w{width}',
             pretrained=pretrained,
             head=head,
             in_chans=audio_channels,
             num_classes=num_classes)
+        # This ensures that all height dimensions will match if window_length is a power of 2
+        self.hrnet.conv1.padding = (0, 1)
         if head == 'separation':
             self.hrnet.last_layer = HRNetV2LastLayer(
                 15 * width,
-                num_classes
+                num_classes,
+                audio_channels
             )
+        else:
+            self.sigmoid = nn.Sigmoid()
         if stft_params is None:
             stft_params = STFTParams(window_length=512, hop_length=128, window_type='sqrt_hann')
         self.stft_params = stft_params
         self.stft = STFT(stft_params.window_length,
                          hop_length=stft_params.hop_length,
                          window_type=stft_params.window_length)
+        self.amplitude_to_db = AmplitudeToDB()
 
     def _separation_forward(self, spec):
         """
@@ -150,23 +158,53 @@ class HRNet(nn.Module):
 
         return out
 
-    def masks_and_audio(self, audio, spec, out):
-        num_frames = spec.shape[-1]
-        out = torch.reshape()
+    def preprocess(self, waveform):
+        stft = self.stft(waveform, direction='transform').permute(0, 3, 2, 1)
+        magnitude, phase = torch.split(stft, stft.shape[2] // 2, dim=2)
+        data = self.amplitude_to_db(magnitude)
+        return data, magnitude, phase
 
-    def forward(self, audio):
+    def masks_and_audio(self, magnitude, phase, out):
+        batch, num_frames = out.shape[0], out.shape[-1]
+        num_freqs = self.stft_params.window_length // 2 + 1
+        out = torch.reshape(out, (batch, self.num_classes, self.audio_channels,
+                            num_freqs, num_frames))
+        masks = out.permute(0, 2, 3, 4, 1)
+        # masks: (batch, audio_channels, num_freqs, num_frames, num_classes)
+        estimates = magnitude.unsqueeze(-1) * masks
+        # masks: (batch, audio_channels, num_freqs, num_frames, num_classes)
+        _phase = phase.unsqueeze(-1).expand_as(estimates)
+        estimates_with_phase = torch.cat([estimates, _phase], dim=2)
+        audio = self.stft(estimates_with_phase, direction='inverse')
+        # audio: (batch, audio_channels, num_samples, num_classes)
+        return masks, estimates, audio
+
+    def pad_frames(self, data):
+        num_frames = data.shape[-1]
+        pad_frames = (num_frames // 32 + 1) * 32 - num_frames
+        data = F.pad(data, (0, pad_frames))
+        return data, pad_frames
+
+    def unpad_frames(data, pad_frames):
+        return data[..., :-pad_frames]
+
+    def forward(self, waveform):
         # audio: (batch, num_channels, num_samples)
-        spec = self.stft(audio, direction='transform')
+        data, magnitude, phase = self.preprocess(waveform)
+        data, pad_frames = self.pad_frames(data)
         # TODO: check if audio must be padded.
-        # spec: (batch, num_channels, num_freqs, num_frames)
+        # data: (batch, num_channels, num_freqs, num_frames)
         if self.hrnet.head == 'classification':
-            out = self.hrnet(spec)
-            # out: (batch, num_classes)
+            out = {
+                'tags': self.sigmoid(self.hrnet(data))
+            }
         if self.hrnet.head == 'separation':
-            out = self._separation_forward(spec)
+            out = self._separation_forward(data)
+            out = self.unpad_frames(out, pad_frames)
+            masks, estimates, audio = self.masks_and_audio(magnitude, phase, out)
+            out = {
+                'masks': masks,
+                'estimates': estimates,
+                'audio': audio
+            }
         return out
-
-        
-
-
-

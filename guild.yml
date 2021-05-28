@@ -2,7 +2,22 @@
   operations:
     train:
       flags:
-        hrnet_pretrained: False
-        hrnet_width: 32
-        dataset: 'musdb'
-        task: 'separation'
+        dataset: openmic
+        toy_dataset: False
+
+        imagenet_pretrained: False
+        hrnet_width: 18
+        task: classification
+        window_length: 512
+        hop_length: 128
+        window_type: sqrt_hann
+        sample_rate: 22500
+
+        batch_size: 16
+        learning_rate: .01
+        momentum: .9
+        weight_decay: .0005
+        epochs: 100
+        poly_power: .9
+        num_workers: 8
+        device: 'cuda:0'
