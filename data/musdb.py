@@ -122,9 +122,10 @@ class SegmentedMUSDB(nussl.datasets.BaseDataset):
     def process_item(self, item):
         mix, sources = self.musdb_track_to_audio_signals(item)
         self._setup_audio_signal(mix)
-        source_names = sorted(list(sources.values()))
+        source_names = sorted(list(sources.keys()))
         source_audio = []
-        for source in source_names:
+        for source_name in source_names:
+            source = sources[source_name]
             self._setup_audio_signal(source)
             source_audio.append(source.audio_data)
 

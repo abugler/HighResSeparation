@@ -99,30 +99,31 @@ def resample_batch(batch):
         batch['mix_audio'] = resampler(batch['mix_audio'])
         if 'source_audio' in batch:
             batch['source_audio'] = resampler(
-                batch['source_audio'].permute(0, 1, 3, 2)
+                batch['source_audio'].permute(0, 1, 3, 2).contiguous()
             ).permute(0, 1, 3, 2)
-    
 
 def train_step(engine, batch):
     model.train()
-    model.zero_grad()
+    model.zero_grad(set_to_none=True)
+    torch.cuda.empty_cache()
     resample_batch(batch)
     output = model(batch['mix_audio'])
     if separate:
+        model.stft.direction = 'transform'
         loss = funcs.reconstruction_loss(output, batch, model.stft)
     else:
         loss = funcs.classification_loss(output, batch)
     loss.backward()
     optimizer.step()
-
     return {'loss': loss.item()}
 
 def val_step(engine, batch):
     with torch.no_grad():
         model.eval()
         resample_batch(batch)
-        output = model(batch)
+        output = model(batch['mix_audio'])
         if separate:
+            model.stft.direction = 'transform'
             loss = funcs.reconstruction_loss(output, batch, model.stft)
         else:
             loss = funcs.classification_loss(output, batch)
