@@ -1,5 +1,7 @@
 import torch
 import torch.nn.functional as F
+from nussl.ml.train.loss import SISDRLoss
+import torch.nn as nn
 
 def reconstruction_loss(output, batch, stft_function):
     with torch.no_grad():
@@ -14,3 +16,12 @@ def classification_loss(output, batch):
         batch['tags']
     )
     return loss
+
+class SISDR(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.loss = SISDRLoss()
+    
+    def forward(self, output, batch):
+        sisdr = - self.loss(batch['source_audio'], output['audio'])
+        return sisdr

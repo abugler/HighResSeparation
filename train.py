@@ -50,6 +50,8 @@ if dataset == 'musdb':
     if toy_dataset:
         kwargs['num_tracks'] = 1
     train_dataset, val_dataset = data.build_musdb(False, **kwargs)
+    if toy_dataset:
+        val_dataset = train_dataset
 elif dataset == 'openmic':
     with open('.guild/sourcecode/data_conf/openmic_args.yml') as s:
         kwargs = yaml.load(s)
@@ -77,6 +79,9 @@ resampler = tfa_transforms.Resample(
     sample_rate
 ).to(device)
 
+if separate:
+    sisdr = funcs.SISDR()
+
 # Training Setup
 
 optimizer = torch.optim.SGD(model.parameters(),
@@ -102,6 +107,11 @@ def resample_batch(batch):
                 batch['source_audio'].permute(0, 1, 3, 2).contiguous()
             ).permute(0, 1, 3, 2)
 
+def dict_to_item(d : dict):
+    for k, v in d.items():
+        d[k] = v.item()
+    return d
+
 def train_step(engine, batch):
     model.train()
     model.zero_grad(set_to_none=True)
@@ -110,12 +120,17 @@ def train_step(engine, batch):
     output = model(batch['mix_audio'])
     if separate:
         model.stft.direction = 'transform'
-        loss = funcs.reconstruction_loss(output, batch, model.stft)
+        loss_dict = {
+            'loss': funcs.reconstruction_loss(output, batch, model.stft),
+            'si-sdr': sisdr(output, batch)
+        }
     else:
-        loss = funcs.classification_loss(output, batch)
-    loss.backward()
+        loss_dict = {
+            'loss': funcs.classification_loss(output, batch)
+        }
+    loss_dict['loss'].backward()
     optimizer.step()
-    return {'loss': loss.item()}
+    return dict_to_item(loss_dict)
 
 def val_step(engine, batch):
     with torch.no_grad():
@@ -124,10 +139,15 @@ def val_step(engine, batch):
         output = model(batch['mix_audio'])
         if separate:
             model.stft.direction = 'transform'
-            loss = funcs.reconstruction_loss(output, batch, model.stft)
+            loss_dict = {
+                'loss': funcs.reconstruction_loss(output, batch, model.stft),
+                'si-sdr': sisdr(output, batch)
+            }
         else:
-            loss = funcs.classification_loss(output, batch)
-    return {'loss': loss.item()}
+            loss_dict = {
+                'loss': funcs.classification_loss(output, batch)
+            }
+    return dict_to_item(loss_dict)
 
 trainer, validator = nussl.ml.train.create_train_and_validation_engines(
     train_step, val_step, device=device

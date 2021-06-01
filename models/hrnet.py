@@ -12,9 +12,10 @@ class HRNetV2LastLayer(nn.Module):
     """
     Overrides last layer in HrNet for separation.
 
-    Includes two blocks:
-    + Conversion back into the original resolution.
-    + Computation of mask.
+    Similar to the HRNetV2 head used for semantic segmentation, with some differences:
+    + An upsampling layer is added, to put the stem in the same dimensions as the spectrogram.
+    + To conserve memory, the stem with 15 * C channels is reduces to C channels.
+    
 
     Copied from https://github.com/HRNet/HRNet-Semantic-Segmentation/blob/HRNet-OCR/lib/models/seg_hrnet.py
     """
@@ -72,7 +73,7 @@ class HRNet(nn.Module):
       but that is outside the scope of this work.
     
     Notes about classification vs. Segmentation:
-    The HRNetV2 head will be used for separation, as it is used for semantic segmentation in (1).
+    A Variation of the HRNetV2 head will be used for separation, as it is used for semantic segmentation in (1).
 
     The downsampling head will be used for classification.
     Parameters
