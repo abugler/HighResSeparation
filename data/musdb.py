@@ -134,7 +134,7 @@ class SegmentedMUSDB(nussl.datasets.BaseDataset):
             'mix_audio': mix.audio_data,
             'source_audio': source_audio_data,
             'metadata': {
-                'labels': ['bass', 'drums', 'other', 'vocals']
+                'labels': source_names
             }
         }
         return output

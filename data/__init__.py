@@ -2,6 +2,8 @@ from .musdb import SegmentedMUSDB
 from .openmic import OpenMIC
 from .mtg_jamendo import MTGJamendo
 
+ALIGN_CORNERS = None
+
 def build_musdb(evaluate : bool,
                 folder : str,
                 is_wav : bool,

@@ -24,9 +24,9 @@ task = 'separation'
 window_length = 512
 hop_length = 128
 window_type = 'sqrt_hann'
-sample_rate = 22_500
+sample_rate = 22_050
 
-batch_size = 16
+batch_size = 8
 learning_rate = .01
 momentum = .9
 weight_decay = .0005
@@ -61,8 +61,7 @@ elif dataset == 'mtg_jamendo':
         kwargs = yaml.load(s)
     train_dataset, val_dataset = data.build_mtg_jamendo(False, **kwargs)
 
-# Model 
-separate = task == 'separation'
+# Model  
 model = models.HRNet(
     train_dataset.num_classes,
     pretrained=imagenet_pretrained,
@@ -70,7 +69,7 @@ model = models.HRNet(
     stft_params=STFTParams(window_length=window_length,
                            hop_length=hop_length,
                            window_type=window_type),
-    separate=separate,
+    head=task,
     audio_channels=1
 ).to(device)
 
@@ -79,8 +78,11 @@ resampler = tfa_transforms.Resample(
     sample_rate
 ).to(device)
 
-if separate:
+if task == 'separation':
     sisdr = funcs.SISDR()
+    recon_loss = funcs.ReconstructionLoss()
+if task == 'segmentation':
+    ce_loss = funcs.CrossEntropy()
 
 # Training Setup
 
@@ -113,20 +115,26 @@ def dict_to_item(d : dict):
     return d
 
 def train_step(engine, batch):
+    
     model.train()
     model.zero_grad(set_to_none=True)
     torch.cuda.empty_cache()
     resample_batch(batch)
     output = model(batch['mix_audio'])
-    if separate:
+    if task == 'separation':
         model.stft.direction = 'transform'
         loss_dict = {
-            'loss': funcs.reconstruction_loss(output, batch, model.stft),
+            'loss': recon_loss(output, batch, model.stft),
             'si-sdr': sisdr(output, batch)
         }
-    else:
+    elif task == 'classification':
         loss_dict = {
             'loss': funcs.classification_loss(output, batch)
+        }
+
+    elif task == 'segmentation':
+        loss_dict = {
+            'loss': ce_loss(output, batch)
         }
     loss_dict['loss'].backward()
     optimizer.step()
@@ -137,15 +145,20 @@ def val_step(engine, batch):
         model.eval()
         resample_batch(batch)
         output = model(batch['mix_audio'])
-        if separate:
+        if task == 'separation':
             model.stft.direction = 'transform'
             loss_dict = {
-                'loss': funcs.reconstruction_loss(output, batch, model.stft),
+                'loss': recon_loss(output, batch, model.stft),
                 'si-sdr': sisdr(output, batch)
             }
-        else:
+        elif task == 'classification':
             loss_dict = {
                 'loss': funcs.classification_loss(output, batch)
+            }
+
+        elif task == 'segmentation':
+            loss_dict = {
+                'loss': ce_loss(output, batch)
             }
     return dict_to_item(loss_dict)
 

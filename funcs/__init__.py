@@ -1,1 +1,4 @@
-from .loss import reconstruction_loss, classification_loss, SISDR
+from .loss import (ReconstructionLoss,
+                   classification_loss,
+                   SISDR,
+                   CrossEntropy)
