@@ -68,7 +68,7 @@ class HRNetV2(nn.Module):
                 out_channels=last_inp_channels,
                 kernel_size=1,
                 stride=1,
-                padding=1),
+                padding=0),
             nn.BatchNorm2d(last_inp_channels, momentum=_BN_MOMENTUM),
             nn.ReLU(),
             nn.Conv2d(
@@ -81,7 +81,7 @@ class HRNetV2(nn.Module):
         )
 
     def forward(self, x):
-        x = F.pad(x, ((0, 1), (0, 0)))
+        x = F.pad(x, (0, 0, 0, 1))
         x = self.last_layer(x)
         return x
 
@@ -95,14 +95,13 @@ class StemEncoder(nn.Module):
     a power of 2 + 1.
     """
     def __init__(self,
-                 audio_channels : int,
-                 width : int):
+                 audio_channels : int):
         super().__init__()
         self.layers = nn.Sequential(
-            nn.Conv2d(audio_channels, width, kernel_size=3, stride=2, padding=(0, 1), bias=False),
-            nn.BatchNorm2d(width, momentum=_BN_MOMENTUM),
+            nn.Conv2d(audio_channels, 64, kernel_size=3, stride=2, padding=(0, 1), bias=False),
+            nn.BatchNorm2d(64, momentum=_BN_MOMENTUM),
             nn.ReLU(inplace=True),
-            nn.Conv2d(width, 64, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.Conv2d(64, 64, kernel_size=3, stride=2, padding=1, bias=False),
             nn.BatchNorm2d(64, momentum=_BN_MOMENTUM),
             nn.ReLU(inplace=True)
         )
@@ -122,6 +121,7 @@ class SpecEncoder(nn.Module):
         self.bn = nn.BatchNorm2d(width)
     
     def forward(self, x):
+        x = F.pad(x, (0, 0, 0, 1))
         x = self.conv(x)
         x = self.bn(x)
         return x

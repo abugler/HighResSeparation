@@ -52,6 +52,10 @@ class HRNet(nn.Module):
         If True, downsamples input to a "stem", which is a high channel feature map
         with 1/4 of the resolutiion. Otherwise, the HRNet operates on a spectrogram,
         with adjusted dimensions such that the height is a power of 2.
+    skip : bool
+        Only for separation head.
+        If True, then the original magnitude spectrogram is appended to the
+        feature map before the final convolution.
     """
     def __init__(self,
                  closure_key : str,
@@ -60,18 +64,20 @@ class HRNet(nn.Module):
                  stft_params : STFTParams=None,
                  head : str = 'classification',
                  stem : bool = False, 
-                 audio_channels : int = 1):
+                 audio_channels : int = 1,
+                 skip : bool = False):
         super().__init__()
 
         self.num_classes = num_classes
         self.audio_channels = audio_channels
+        self.skip = skip
 
         # Load and edit configuration
-        hrnet_config = HRNetConfigurations(closure_key)
+        hrnet_config = HRNetConfigurations[closure_key]
         width = hrnet_config['STAGE2']['NUM_CHANNELS'][0]
         
         if stem:
-            self.encoder = StemEncoder(audio_channels, width)
+            self.encoder = StemEncoder(audio_channels)
         else:
             hrnet_config['STEM_WIDTH'] = width
             hrnet_config['STAGE1']['NUM_CHANNELS'] = (width,)
@@ -85,6 +91,12 @@ class HRNet(nn.Module):
         )
         # Remove stem encoder. We use a custom one for spectrograms.
         self.clear_stem_encoder()
+        if not stem:
+            # 
+            self.hrnet.layer1 = self.hrnet._make_layer(
+                Bottleneck, width, width,
+                hrnet_config['STAGE1']['NUM_BLOCKS'][0]
+            )
 
         if stft_params is None:
             stft_params = STFTParams(window_length=512, hop_length=128, window_type='sqrt_hann')
@@ -94,8 +106,8 @@ class HRNet(nn.Module):
                          window_type=stft_params.window_type)
         self.amplitude_to_db = AmplitudeToDB()
 
-        if 'separation' in head:
-            if skip in head:
+        if self.hrnet.head == 'separation':
+            if skip:
                 self.hrnet.last_layer = HRNetV2Skip(
                     width,
                     num_classes,
@@ -127,7 +139,7 @@ class HRNet(nn.Module):
         # Stages
         hr_out = self.hrnet.stages(x)
         # x: List of four tensors, each with decreasing feature map size and increasing channels
-        if 'separation' in self.hrnet.head:
+        if self.hrnet.head == 'separation':
             # Upsampling
             x0_h, x0_w = hr_out[0].size(2), hr_out[0].size(3)
             x1 = F.interpolate(hr_out[1], size=(x0_h, x0_w), mode='bilinear', align_corners=ALIGN_CORNERS)
@@ -148,7 +160,7 @@ class HRNet(nn.Module):
                 # x: (batch, 1024, spec.freqs - 1, self.frames)
 
         # Compute Masks
-        if 'skip' in self.hrnet.head:
+        if self.skip:
             out = self.hrnet.last_layer(x, spec)
         else:
             out = self.hrnet.last_layer(x)
@@ -216,10 +228,9 @@ class HRNet(nn.Module):
                 out = F.dropout(out, p=self.hrnet.drop_rate, training=self.training)
             out = self.hrnet.classifier(out)
             out = {
-                'tags': x
+                'tags': out
             }
-        if 'separation' in self.hrnet.head:
-            out = self._separation_forward(data)
+        if self.hrnet.head == 'separation':
             out = self.unpad_frames(out, pad_frames)
             masks, estimates, audio = self.masks_and_audio(magnitude, phase, out)
             out = {

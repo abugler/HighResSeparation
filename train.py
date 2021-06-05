@@ -19,12 +19,14 @@ dataset = 'musdb'
 toy_dataset = False
 
 imagenet_pretrained = False
-closure_key = hrnet_w18_small_v2
+closure_key = 'hrnet_w18_small_v2'
 task = 'separation'
 window_length = 512
 hop_length = 128
 window_type = 'sqrt_hann'
 sample_rate = 22_050
+stem = False
+skip = False
 
 batch_size = 8
 learning_rate = .01
@@ -63,14 +65,16 @@ elif dataset == 'mtg_jamendo':
 
 # Model  
 model = models.HRNet(
-    closure_key=closure_key,
+    closure_key,
     train_dataset.num_classes,
     pretrained=imagenet_pretrained,
     stft_params=STFTParams(window_length=window_length,
                            hop_length=hop_length,
                            window_type=window_type),
     head=task,
-    audio_channels=1
+    stem=stem,
+    audio_channels=1,
+    skip=skip
 ).to(device)
 
 resampler = tfa_transforms.Resample(
