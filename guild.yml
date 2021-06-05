@@ -6,7 +6,7 @@
         toy_dataset: False
 
         imagenet_pretrained: False
-        hrnet_width: 18
+        closure_key: hrnet_w18_small_v2
         task: classification
         window_length: 512
         hop_length: 128

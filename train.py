@@ -19,7 +19,7 @@ dataset = 'musdb'
 toy_dataset = False
 
 imagenet_pretrained = False
-hrnet_width = 18
+closure_key = hrnet_w18_small_v2
 task = 'separation'
 window_length = 512
 hop_length = 128
@@ -63,9 +63,9 @@ elif dataset == 'mtg_jamendo':
 
 # Model  
 model = models.HRNet(
+    closure_key=closure_key,
     train_dataset.num_classes,
     pretrained=imagenet_pretrained,
-    width=hrnet_width,
     stft_params=STFTParams(window_length=window_length,
                            hop_length=hop_length,
                            window_type=window_type),

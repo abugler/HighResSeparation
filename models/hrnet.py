@@ -6,10 +6,11 @@ import timm
 from nussl import STFTParams
 from nussl.ml.networks.modules import STFT, AmplitudeToDB
 
-from .constants import ALIGN_CORNERS
-from timm.models.hrnet import _BN_MOMENTUM
-from .blocks import HRNetV2Upsample, HRNetV2
+from timm.models.hrnet import HighResolutionNet, _BN_MOMENTUM, cfg_cls as HRNetConfigurations
+from timm.models.resnet import Bottleneck
+from .blocks import HRNetV2Skip, HRNetV2, StemEncoder, SpecEncoder
 
+ALIGN_CORNERS = None
 
 class HRNet(nn.Module):
     """
@@ -32,100 +33,137 @@ class HRNet(nn.Module):
     The downsampling head will be used for classification.
     Parameters
     -----------
+    closure_key : str
+        Closure key for the configuration in `timm.models.hrnet.cls_cfg`.
+        Initial configurations may be found here:
+        https://github.com/rwightman/pytorch-image-models/blob/54a6cca27a9a3e092a07457f5d56709da56e3cf5/timm/models/hrnet.py#L61
+        We are currently experimenting with `hrnet_w18_small_v2`.
     num_classes : int
         Number of classes for either separation or tagging
     pretrained : bool
         If true, use imagenet weights. Default: False
-    width : int
-        Number of channels in first stream
     stft_params : STFTParams
         nussl STFTParams for STFT
     separate : bool
         If True, perform separation. Else, do classification.
     audio_channels : int
         Number of audio channels.
+    stem : bool
+        If True, downsamples input to a "stem", which is a high channel feature map
+        with 1/4 of the resolutiion. Otherwise, the HRNet operates on a spectrogram,
+        with adjusted dimensions such that the height is a power of 2.
     """
     def __init__(self,
+                 closure_key : str,
                  num_classes : int,
                  pretrained : bool=False,
-                 width : int = 18,
                  stft_params : STFTParams=None,
-                 head : str='classification',
+                 head : str = 'classification',
+                 stem : bool = False, 
                  audio_channels : int = 1):
         super().__init__()
 
         self.num_classes = num_classes
         self.audio_channels = audio_channels
-        self.hrnet = timm.create_model(
-            f'hrnet_w{width}',
-            pretrained=pretrained,
-            head=head,
+
+        # Load and edit configuration
+        hrnet_config = HRNetConfigurations(closure_key)
+        width = hrnet_config['STAGE2']['NUM_CHANNELS'][0]
+        
+        if stem:
+            self.encoder = StemEncoder(audio_channels, width)
+        else:
+            hrnet_config['STEM_WIDTH'] = width
+            hrnet_config['STAGE1']['NUM_CHANNELS'] = (width,)
+            self.encoder = SpecEncoder(audio_channels, width)
+
+        self.hrnet = HighResolutionNet(
+            hrnet_config,
             in_chans=audio_channels,
-            num_classes=num_classes)
-        # This ensures that all height dimensions will match if window_length is a power of 2
-        self.hrnet.conv1.padding = (0, 1)
+            num_classes=num_classes,
+            head=head
+        )
+        # Remove stem encoder. We use a custom one for spectrograms.
+        self.clear_stem_encoder()
 
         if stft_params is None:
             stft_params = STFTParams(window_length=512, hop_length=128, window_type='sqrt_hann')
         self.stft_params = stft_params
         self.stft = STFT(stft_params.window_length,
                          hop_length=stft_params.hop_length,
-                         window_type=stft_params.window_length)
+                         window_type=stft_params.window_type)
         self.amplitude_to_db = AmplitudeToDB()
-        self.spec_bn = nn.BatchNorm2d(audio_channels, momentum=_BN_MOMENTUM)
-        if head == 'separation':
-            self.hrnet.last_layer = HRNetV2Upsample(
-                width,
-                num_classes,
-                stft_params.window_length // 2 + 1,
-                audio_channels
-            )
+
+        if 'separation' in head:
+            if skip in head:
+                self.hrnet.last_layer = HRNetV2Skip(
+                    width,
+                    num_classes,
+                    audio_channels,
+                    stem
+                )
+            else:
+                self.hrnet.last_layer = HRNetV2(width, num_classes)
         elif head == 'classification':
-            self.sigmoid = nn.Sigmoid()
-        elif head == 'segmentation':
-            self.hrnet.last_layer = HRNetV2(
-                width,
-                num_classes
-            )
+            pass
         else:
             raise ValueError("Invalid head!")
 
 
-    def _separation_forward(self, spec):
+    def _forward(self, spec):
         """
         `timm` doesn't include semantic segmentation support. We have to use a manual forward
         that uses the components of the HRNet.
 
         Upsampling is copied from https://github.com/HRNet/HRNet-Semantic-Segmentation/blob/HRNet-OCR/lib/models/seg_hrnet.py#L455
         """
-        # BN on spec
-        spec = self.spec_bn(spec)
-        # Make stem
-        x = self.hrnet.conv1(spec)
-        x = self.hrnet.bn1(x)
-        x = self.hrnet.act1(x)
-        x = self.hrnet.conv2(x)
-        x = self.hrnet.bn2(x)
-        stem = self.hrnet.act2(x)
-        # stem: (batch, 64, spec.freqs / 4, self.frames / 4)
+        # Encode Spectrogram
+        x = self.encoder(spec)
+        # if stem:
+            # x: (batch, 64, spec.freqs / 4, self.frames / 4)
+        # else:
+            # x: (batch, width, spec.freqs - 1, self.frames)
 
         # Stages
-        x = self.hrnet.stages(stem)
+        hr_out = self.hrnet.stages(x)
         # x: List of four tensors, each with decreasing feature map size and increasing channels
-
-        # Upsampling
-        x0_h, x0_w = x[0].size(2), x[0].size(3)
-        x1 = F.interpolate(x[1], size=(x0_h, x0_w), mode='bilinear', align_corners=ALIGN_CORNERS)
-        x2 = F.interpolate(x[2], size=(x0_h, x0_w), mode='bilinear', align_corners=ALIGN_CORNERS)
-        x3 = F.interpolate(x[3], size=(x0_h, x0_w), mode='bilinear', align_corners=ALIGN_CORNERS)
-        x = torch.cat([x[0], x1, x2, x3], 1)
-        # x: (batch, 15 * width, spec.freqs / 4, spec.frames / 4)
+        if 'separation' in self.hrnet.head:
+            # Upsampling
+            x0_h, x0_w = hr_out[0].size(2), hr_out[0].size(3)
+            x1 = F.interpolate(hr_out[1], size=(x0_h, x0_w), mode='bilinear', align_corners=ALIGN_CORNERS)
+            x2 = F.interpolate(hr_out[2], size=(x0_h, x0_w), mode='bilinear', align_corners=ALIGN_CORNERS)
+            x3 = F.interpolate(hr_out[3], size=(x0_h, x0_w), mode='bilinear', align_corners=ALIGN_CORNERS)
+            x = torch.cat([hr_out[0], x1, x2, x3], 1)
+            # if stem:
+                # x: (batch, 15 * width, spec.freqs / 4, self.frames / 4)
+            # else:
+                # x: (batch, 15 * width, spec.freqs - 1, self.frames)
+        else:
+            x = self.incre_modules[0](hr_out[0])
+            for i, down in enumerate(self.downsamp_modules):
+                x = self.incre_modules[i + 1](hr_out[i + 1]) + down(x)
+            # if stem:
+                # x: (batch, 1024, spec.freqs / 4, self.frames / 4)
+            # else:
+                # x: (batch, 1024, spec.freqs - 1, self.frames)
 
         # Compute Masks
-        out = self.hrnet.last_layer(x, spec)
+        if 'skip' in self.hrnet.head:
+            out = self.hrnet.last_layer(x, spec)
+        else:
+            out = self.hrnet.last_layer(x)
         # x: (batch, num_classes, spec.freq, spec.frames)
 
         return out
+
+    def clear_stem_encoder(self):
+        del self.hrnet.conv1
+        del self.hrnet.bn1
+        del self.hrnet.act1
+        del self.hrnet.conv2
+        del self.hrnet.bn2
+        del self.hrnet.act2
+    
 
     def preprocess(self, waveform):
         stft = self.stft(waveform, direction='transform')
@@ -170,12 +208,17 @@ class HRNet(nn.Module):
         data, pad_frames = self.pad_frames(data)
         # TODO: check if audio must be padded.
         # data: (batch, num_channels, num_freqs, num_frames)
+        out = self._forward(data)
         if self.hrnet.head == 'classification':
-            data = self.spec_bn(data)
+            out = self.hrnet(data)
+            out = self.hrnet.global_pool(out)
+            if self.hrnet.drop_rate > 0.:
+                out = F.dropout(out, p=self.hrnet.drop_rate, training=self.training)
+            out = self.hrnet.classifier(out)
             out = {
-                'tags': self.sigmoid(self.hrnet(data))
+                'tags': x
             }
-        if self.hrnet.head == 'separation':
+        if 'separation' in self.hrnet.head:
             out = self._separation_forward(data)
             out = self.unpad_frames(out, pad_frames)
             masks, estimates, audio = self.masks_and_audio(magnitude, phase, out)
