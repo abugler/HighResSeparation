@@ -2,6 +2,8 @@
   operations:
     train:
       flags:
+        seed: 0
+
         dataset: openmic
         toy_dataset: False
 
@@ -15,6 +17,7 @@
         stem: False
         skip: False
 
+        resume: null
         batch_size: 8
         learning_rate: .01
         momentum: .9

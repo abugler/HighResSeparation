@@ -23,6 +23,7 @@ class HRNetV2Skip(nn.Module):
         self.stem = stem
         width_multi = 15
         last_inp_channels = width * width_multi
+        self.spec_bn = nn.BatchNorm2d(audio_channels)
         self.layer1 = nn.Sequential(
             nn.Conv2d(
                 in_channels=last_inp_channels,
@@ -36,6 +37,13 @@ class HRNetV2Skip(nn.Module):
         self.layer2 = nn.Sequential(
             nn.Conv2d(
                 in_channels=width + audio_channels,
+                out_channels=width,
+                kernel_size=3,
+                stride=1,
+                padding=1),
+            nn.ReLU(),
+            nn.Conv2d(
+                in_channels=width,
                 out_channels=num_classes * audio_channels,
                 kernel_size=3,
                 stride=1,
@@ -49,6 +57,7 @@ class HRNetV2Skip(nn.Module):
         if self.stem:
             upsample = nn.Upsample(size=spec.shape[-2:], mode='bilinear')
             x = upsample(x)
+        spec = self.spec_bn(spec)
         x = torch.cat([x, spec], dim=1)
         x = self.layer2(x)
         return x
@@ -59,9 +68,13 @@ class HRNetV2(nn.Module):
     """
     def __init__(self,
                  width : int,
-                 num_classes : int):
+                 num_classes : int,
+                 stem : bool):
         super().__init__()
         last_inp_channels = 15 * width
+        self.stem = stem
+        if stem:
+            self.upsample = nn.Upsample(scale_factor=4.0)
         self.last_layer = nn.Sequential(
             nn.Conv2d(
                 in_channels=last_inp_channels,
@@ -81,6 +94,8 @@ class HRNetV2(nn.Module):
         )
 
     def forward(self, x):
+        if self.stem:
+            x = self.upsample(x)
         x = F.pad(x, (0, 0, 0, 1))
         x = self.last_layer(x)
         return x

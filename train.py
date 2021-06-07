@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
@@ -15,6 +16,8 @@ from nussl import STFTParams
 import funcs
 
 # Hyperparameters
+seed = 0
+
 dataset = 'musdb'
 toy_dataset = False
 
@@ -28,6 +31,7 @@ sample_rate = 22_050
 stem = False
 skip = False
 
+resume = None
 batch_size = 8
 learning_rate = .01
 momentum = .9
@@ -37,6 +41,11 @@ epoch_length = 100
 poly_power = .9
 num_workers = 8
 device = 'cuda:0'
+optimizer = 'sgd'
+
+# Seeding
+torch.manual_seed(seed)
+np.random.seed(seed)
 
 # Setup Logging
 logger = logging.getLogger('train')
@@ -53,6 +62,7 @@ if dataset == 'musdb':
         kwargs['num_tracks'] = 1
     train_dataset, val_dataset = data.build_musdb(False, **kwargs)
     if toy_dataset:
+        train_dataset.num_excerpts = 1
         val_dataset = train_dataset
 elif dataset == 'openmic':
     with open('.guild/sourcecode/data_conf/openmic_args.yml') as s:
@@ -63,7 +73,7 @@ elif dataset == 'mtg_jamendo':
         kwargs = yaml.load(s)
     train_dataset, val_dataset = data.build_mtg_jamendo(False, **kwargs)
 
-# Model  
+# Model and Optimizer
 model = models.HRNet(
     closure_key,
     train_dataset.num_classes,
@@ -77,6 +87,25 @@ model = models.HRNet(
     skip=skip
 ).to(device)
 
+if optimizer == 'sgd':
+    optimizer = torch.optim.SGD(model.parameters(),
+                                lr=learning_rate,
+                                momentum=momentum,
+                                weight_decay=weight_decay)
+elif optimizer == 'adam':
+    optimizer = torch.optim.Adam(model.parameters(),
+                                 lr=learning_rate,
+                                 weight_decay=weight_decay)
+
+if resume:
+    resume_model_path = os.path.join(resume, 'checkpoints/best.model.pth')
+    model_state_dict = torch.load(resume_model_path)
+    model.load_state_dict(model_state_dict)
+
+    resume_optimizer_path = os.path.join(resume, 'checkpoints/best.optimizer.pth')
+    optimizer_state_dict = torch.load(resume_optimizer_path)
+    optimizer.load_state_dict(optimizer_state_dict)
+
 resampler = tfa_transforms.Resample(
     train_dataset.sample_rate,
     sample_rate
@@ -88,12 +117,9 @@ if task == 'separation':
 if task == 'segmentation':
     ce_loss = funcs.CrossEntropy()
 
-# Training Setup
 
-optimizer = torch.optim.SGD(model.parameters(),
-                            lr=learning_rate,
-                            momentum=momentum,
-                            weight_decay=weight_decay)
+
+# Training Setup                        
 
 train_dataloader = DataLoader(train_dataset,
                               num_workers=num_workers,

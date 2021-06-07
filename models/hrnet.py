@@ -92,7 +92,6 @@ class HRNet(nn.Module):
         # Remove stem encoder. We use a custom one for spectrograms.
         self.clear_stem_encoder()
         if not stem:
-            # 
             self.hrnet.layer1 = self.hrnet._make_layer(
                 Bottleneck, width, width,
                 hrnet_config['STAGE1']['NUM_BLOCKS'][0]
@@ -115,7 +114,7 @@ class HRNet(nn.Module):
                     stem
                 )
             else:
-                self.hrnet.last_layer = HRNetV2(width, num_classes)
+                self.hrnet.last_layer = HRNetV2(width, num_classes, stem)
         elif head == 'classification':
             pass
         else:
@@ -244,5 +243,5 @@ class HRNet(nn.Module):
         """
         Overriding SeparationModel's save
         """
-        torch.save(self, location)
+        torch.save(self.state_dict(), location)
         return location
