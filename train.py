@@ -38,6 +38,7 @@ momentum = .9
 weight_decay = .0005
 epochs = 100
 epoch_length = 100
+valid_epoch_length = None
 poly_power = .9
 num_workers = 8
 device = 'cuda:0'
@@ -131,14 +132,6 @@ val_dataloader = DataLoader(val_dataset,
                             batch_size=batch_size,
                             shuffle=True)
 
-def resample_batch(batch):
-    with torch.no_grad():
-        batch['mix_audio'] = resampler(batch['mix_audio'])
-        if 'source_audio' in batch:
-            batch['source_audio'] = resampler(
-                batch['source_audio'].permute(0, 1, 3, 2).contiguous()
-            ).permute(0, 1, 3, 2)
-
 def dict_to_item(d : dict):
     for k, v in d.items():
         d[k] = v.item()
@@ -149,7 +142,7 @@ def train_step(engine, batch):
     model.train()
     model.zero_grad(set_to_none=True)
     torch.cuda.empty_cache()
-    resample_batch(batch)
+    funcs.resample_batch(batch, resampler)
     output = model(batch['mix_audio'])
     if task == 'separation':
         model.stft.direction = 'transform'
@@ -173,7 +166,7 @@ def train_step(engine, batch):
 def val_step(engine, batch):
     with torch.no_grad():
         model.eval()
-        resample_batch(batch)
+        funcs.resample_batch(batch, resampler)
         output = model(batch['mix_audio'])
         if task == 'separation':
             model.stft.direction = 'transform'
@@ -213,6 +206,16 @@ def on_iteration_completed(engine):
                * (1 - engine.state.iteration / max_iterations) ** poly_power)
     for g in optimizer.param_groups:
         g['lr'] = poly_lr
+
+if valid_epoch_length is not None:
+    @trainer.on(Events.EPOCH_STARTED)
+    def load_validator_state_dict(_):
+        # Load validation epoch length
+        validator.load_state_dict({
+            'iteration': 0,
+            'max_epochs': 1,
+            'epoch_length': valid_epoch_length
+        })
 
 @trainer.on(nussl.ml.train.ValidationEvents.VALIDATION_COMPLETED)
 def on_epoch_completed(engine):

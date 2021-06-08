@@ -73,19 +73,21 @@ class HRNetV2(nn.Module):
         super().__init__()
         last_inp_channels = 15 * width
         self.stem = stem
-        if stem:
-            self.upsample = nn.Upsample(scale_factor=4.0)
-        self.last_layer = nn.Sequential(
+        self.layer1 = nn.Sequential(
             nn.Conv2d(
                 in_channels=last_inp_channels,
-                out_channels=last_inp_channels,
+                out_channels=width,
                 kernel_size=1,
                 stride=1,
                 padding=0),
-            nn.BatchNorm2d(last_inp_channels, momentum=_BN_MOMENTUM),
-            nn.ReLU(),
+            nn.BatchNorm2d(width, momentum=_BN_MOMENTUM),
+            nn.ReLU()
+        )
+        if stem:
+            self.upsample = nn.Upsample(scale_factor=4.0)
+        self.layer2 = nn.Sequential(
             nn.Conv2d(
-                in_channels=last_inp_channels,
+                in_channels=width,
                 out_channels=num_classes,
                 kernel_size=3,
                 stride=1,
@@ -94,10 +96,11 @@ class HRNetV2(nn.Module):
         )
 
     def forward(self, x):
+        x = self.layer1(x)
         if self.stem:
             x = self.upsample(x)
         x = F.pad(x, (0, 0, 0, 1))
-        x = self.last_layer(x)
+        x = self.layer2(x)
         return x
 
 class StemEncoder(nn.Module):

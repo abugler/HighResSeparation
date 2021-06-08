@@ -107,16 +107,16 @@ class HRNet(nn.Module):
 
         if self.hrnet.head == 'separation':
             if skip:
-                self.hrnet.last_layer = HRNetV2Skip(
+                self.hrnet.final_layer = HRNetV2Skip(
                     width,
                     num_classes,
                     audio_channels,
                     stem
                 )
             else:
-                self.hrnet.last_layer = HRNetV2(width, num_classes, stem)
+                self.hrnet.final_layer = HRNetV2(width, num_classes, stem)
         elif head == 'classification':
-            pass
+            self.sigmoid = nn.Sigmoid()
         else:
             raise ValueError("Invalid head!")
 
@@ -150,9 +150,9 @@ class HRNet(nn.Module):
             # else:
                 # x: (batch, 15 * width, spec.freqs - 1, self.frames)
         else:
-            x = self.incre_modules[0](hr_out[0])
-            for i, down in enumerate(self.downsamp_modules):
-                x = self.incre_modules[i + 1](hr_out[i + 1]) + down(x)
+            x = self.hrnet.incre_modules[0](hr_out[0])
+            for i, down in enumerate(self.hrnet.downsamp_modules):
+                x = self.hrnet.incre_modules[i + 1](hr_out[i + 1]) + down(x)
             # if stem:
                 # x: (batch, 1024, spec.freqs / 4, self.frames / 4)
             # else:
@@ -160,9 +160,9 @@ class HRNet(nn.Module):
 
         # Compute Masks
         if self.skip:
-            out = self.hrnet.last_layer(x, spec)
+            out = self.hrnet.final_layer(x, spec)
         else:
-            out = self.hrnet.last_layer(x)
+            out = self.hrnet.final_layer(x)
         # x: (batch, num_classes, spec.freq, spec.frames)
 
         return out
@@ -212,7 +212,6 @@ class HRNet(nn.Module):
             return data
 
     def forward(self, waveform):
-        
         # audio: (batch, num_channels, num_samples)
         data, magnitude, phase = self.preprocess(waveform)
         
@@ -221,11 +220,10 @@ class HRNet(nn.Module):
         # data: (batch, num_channels, num_freqs, num_frames)
         out = self._forward(data)
         if self.hrnet.head == 'classification':
-            out = self.hrnet(data)
             out = self.hrnet.global_pool(out)
             if self.hrnet.drop_rate > 0.:
                 out = F.dropout(out, p=self.hrnet.drop_rate, training=self.training)
-            out = self.hrnet.classifier(out)
+            out = self.sigmoid(self.hrnet.classifier(out))
             out = {
                 'tags': out
             }
