@@ -33,6 +33,7 @@ skip = False
 
 resume = None
 batch_size = 8
+minibatch_size = 8
 learning_rate = .01
 momentum = .9
 weight_decay = .0005
@@ -43,6 +44,9 @@ poly_power = .9
 num_workers = 8
 device = 'cuda:0'
 optimizer = 'sgd'
+
+# Asserts
+assert batch_size >= minibatch_size
 
 # Seeding
 torch.manual_seed(seed)
@@ -130,7 +134,7 @@ train_dataloader = DataLoader(train_dataset,
 
 val_dataloader = DataLoader(val_dataset,
                             num_workers=num_workers,
-                            batch_size=batch_size,
+                            batch_size=minibatch_size,
                             shuffle=True)
 
 def dict_to_item(d : dict):
@@ -138,29 +142,52 @@ def dict_to_item(d : dict):
         d[k] = v.item()
     return d
 
+def to_minibatch(batch: dict[torch.Tensor]):
+    minibatches = [{}] * int(batch['mix_audio'].shape[0] / minibatch_size + 1)
+    for k, v in batch.items():
+        if isinstance(v, torch.Tensor):
+            tensors = torch.split(v, minibatch_size, dim=0)
+            for i, tensor in enumerate(tensors):
+                minibatches[i][k] = tensor
+        else:
+            for minibatch in minibatches:
+                minibatch[k] = v
+    return minibatches
+
+def minibatches_loss(minibatches):
+    batch_loss_dict = {}
+    for batch in minibatches:
+        funcs.resample_batch(batch, resampler)
+        output = model(batch['mix_audio'])
+        if task == 'separation':
+            model.stft.direction = 'transform'
+            loss_dict = {
+                'loss': recon_loss(output, batch, model.stft),
+                'si-sdr': sisdr(output, batch)
+            }
+        elif task == 'classification':
+            loss_dict = {
+                'loss': funcs.classification_loss(output, batch)
+            }
+
+        elif task == 'segmentation':
+            loss_dict = {
+                'loss': ce_loss(output, batch)
+            }
+        loss_dict['loss'].backward()
+        for k, v in loss_dict.items():
+            batch_loss_dict[k] = (v * batch['mix_audio'].shape[0] / batch_size
+                                  + batch_loss_dict.get(k, 0))
+    return batch_loss_dict
+
 def train_step(engine, batch):
-    
     model.train()
     model.zero_grad(set_to_none=True)
     torch.cuda.empty_cache()
-    funcs.resample_batch(batch, resampler)
-    output = model(batch['mix_audio'])
-    if task == 'separation':
-        model.stft.direction = 'transform'
-        loss_dict = {
-            'loss': recon_loss(output, batch, model.stft),
-            'si-sdr': sisdr(output, batch)
-        }
-    elif task == 'classification':
-        loss_dict = {
-            'loss': funcs.classification_loss(output, batch)
-        }
 
-    elif task == 'segmentation':
-        loss_dict = {
-            'loss': ce_loss(output, batch)
-        }
-    loss_dict['loss'].backward()
+    minibatches = to_minibatch(batch)
+    loss_dict = minibatches_loss(minibatches)
+
     optimizer.step()
     return dict_to_item(loss_dict)
 
