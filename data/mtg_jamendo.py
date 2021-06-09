@@ -17,7 +17,7 @@ num_classes_dict = {
 class MTGJamendo(data.Dataset):
     """
     Indexing returns:
-     - "audio": Audio data, in shape (channels, samples)
+     - "mix_audio": Audio data, in shape (channels, samples)
      - "tags": One-hot tags, in shape (num_tags)
     __getitem__ obtains the center section of the track.
     All songs are turned into mono tracks.
@@ -67,11 +67,13 @@ class MTGJamendo(data.Dataset):
         with open(self.metadata_file) as file:
             lines = [line.strip().split("\t") for line in file.readlines()[1:]]
         self.song_names, self.genre_labels = [], np.zeros((len(lines), self.num_classes), dtype=np.float32)
+        
         for idx, line in enumerate(lines):
+            
             path, tags = line[3], line[5:]
             self.song_names.append(path)
             for tag in tags:
-                if self.tag_type != "all" and self.tag_type not in tag:
+                if not self.tag_type in ['all', 'top50tags'] and self.tag_type not in tag:
                     continue
                 jdx = self.class_map.get(tag, len(self.class_map))
 

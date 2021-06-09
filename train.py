@@ -101,6 +101,7 @@ elif optimizer == 'adam':
 if resume:
     resume_model_path = os.path.join(resume, 'checkpoints/best.model.pth')
     model_state_dict = torch.load(resume_model_path)
+    models.state_dict_back_compat(model_state_dict)
     model.load_state_dict(model_state_dict)
 
     resume_optimizer_path = os.path.join(resume, 'checkpoints/best.optimizer.pth')
