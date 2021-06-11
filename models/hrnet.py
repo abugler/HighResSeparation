@@ -1,3 +1,5 @@
+import warnings
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,7 +10,7 @@ from nussl.ml.networks.modules import STFT, AmplitudeToDB
 
 from timm.models.hrnet import HighResolutionNet, _BN_MOMENTUM, cfg_cls as HRNetConfigurations
 from timm.models.resnet import Bottleneck
-from .blocks import HRNetV2Skip, HRNetV2, StemEncoder, SpecEncoder
+from .blocks import HRNetV2Skip, HRNetV2, StemEncoder, SpecEncoder, PeakNorm, WhiteningNorm
 
 ALIGN_CORNERS = None
 
@@ -56,17 +58,28 @@ class HRNet(nn.Module):
         Only for separation head.
         If True, then the original magnitude spectrogram is appended to the
         feature map before the final convolution.
+    spec_norm : str
+        Specifies normalization to be done on the spectrogram.
+        Can be None, 'batch', or 'instance'. Default: None
+    waveform_norm : str
+        Specifies normalization to be done on the waveform.
+        Can be None, 'peak', or 'whitening'.
     """
     def __init__(self,
                  closure_key : str,
                  num_classes : int,
-                 pretrained : bool=False,
-                 stft_params : STFTParams=None,
+                 pretrained : bool = False,
+                 stft_params : STFTParams = None,
                  head : str = 'classification',
                  stem : bool = False, 
                  audio_channels : int = 1,
-                 skip : bool = False):
+                 skip : bool = False,
+                 spec_norm : str = None,
+                 waveform_norm : str = None):
         super().__init__()
+
+        if not (waveform_norm is None or spec_norm is None):
+            warnings.warn("Using both `waveform_norm` and `spec_norm`!")
 
         self.num_classes = num_classes
         self.audio_channels = audio_channels
@@ -97,6 +110,7 @@ class HRNet(nn.Module):
                 hrnet_config['STAGE1']['NUM_BLOCKS'][0]
             )
 
+        # Define signal preprocessing
         if stft_params is None:
             stft_params = STFTParams(window_length=512, hop_length=128, window_type='sqrt_hann')
         self.stft_params = stft_params
@@ -105,6 +119,7 @@ class HRNet(nn.Module):
                          window_type=stft_params.window_type)
         self.amplitude_to_db = AmplitudeToDB()
 
+        # Define HRNet Heads
         if self.hrnet.head == 'separation':
             if skip:
                 self.hrnet.final_layer = HRNetV2Skip(
@@ -120,6 +135,19 @@ class HRNet(nn.Module):
         else:
             raise ValueError("Invalid head!")
 
+        if waveform_norm == 'peak':
+            self.waveform_norm = PeakNorm()
+        elif waveform_norm == 'whitening':
+            self.waveform_norm = WhiteningNorm()
+        else:
+            self.waveform_norm = None
+        
+        if spec_norm == 'batch':
+            self.spec_norm = nn.BatchNorm2d(audio_channels)
+        elif spec_norm == 'instance':
+            self.spec_norm = nn.InstanceNorm2d(audio_channels)
+        else:
+            self.spec_norm = None
 
     def _forward(self, spec):
         """
@@ -174,14 +202,17 @@ class HRNet(nn.Module):
         del self.hrnet.conv2
         del self.hrnet.bn2
         del self.hrnet.act2
-    
 
     def preprocess(self, waveform):
+        if self.waveform_norm is not None:
+            waveform = self.waveform_norm(waveform, direction='forward')
         stft = self.stft(waveform, direction='transform')
         # stft : (batch, num_frames, num_freqs * 2, channels)
         magnitude, phase = torch.split(stft, stft.shape[2] // 2, dim=2)
         # magnitude, phase : (batch, num_frames, num_freqs, channels)
         data = self.amplitude_to_db(magnitude).permute(0, 3, 2, 1)
+        if self.spec_norm is not None:
+            data = self.spec_norm(data)
         return data, magnitude, phase
 
     def masks_and_audio(self, magnitude, phase, out):
@@ -196,6 +227,8 @@ class HRNet(nn.Module):
         _phase = torch.stack([phase] * self.num_classes, dim=4)
         estimates_with_phase = torch.cat([estimates, _phase], dim=2)
         audio = self.stft(estimates_with_phase, direction='inverse')
+        if self.waveform_norm is not None:
+            audio = self.waveform_norm(audio, direction='backward')
         # audio: (batch, audio_channels, num_samples, num_classes)
         return masks, estimates, audio
 

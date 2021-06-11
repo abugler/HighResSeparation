@@ -3,6 +3,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from timm.models.hrnet import _BN_MOMENTUM
 
+###############
+# HRNet Heads #
+###############
+
 class HRNetV2Skip(nn.Module):
     """
     Overrides last layer in HrNet for separation.
@@ -103,6 +107,10 @@ class HRNetV2(nn.Module):
         x = self.layer2(x)
         return x
 
+############
+# Encoders #
+############
+
 class StemEncoder(nn.Module):
     """
     Encodes a spectrogram into a stem.
@@ -143,3 +151,68 @@ class SpecEncoder(nn.Module):
         x = self.conv(x)
         x = self.bn(x)
         return x
+
+########################
+# Normalization Blocks #
+########################
+
+class WaveformNorm(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+class PeakNorm(WaveformNorm):
+    """
+    Performs peak norm.
+
+    direction == 'forward' normalizes audio.
+    direction == 'backward' unnormalizes audio.
+
+    NOTE: `direction == 'backward` is not thread-safe. Use with care.
+    """
+    def __init__(self, max_val=.9, epsilon=1e-7):
+        super().__init__()
+        self.epsilon = epsilon
+        self.max_val = .9
+        self.peak = None
+
+    def forward(self, waveform, direction='forward'):
+        assert direction in ['forward', 'backward']
+        with torch.no_grad():
+            if direction == 'forward':
+                peak = torch.max(torch.abs(waveform)) + epsilon
+                waveform = waveform / peak
+                waveform = waveform * self.max_val
+                self.peak = peak
+            else:
+                peak = self.peak
+                waveform = waveform / self.max_val
+                waveform =  waveform * peak
+        return waveform
+
+class WhiteningNorm(WaveformNorm):
+    """
+    Performs "unit" norm, similar to Demucs.
+
+    direction == 'forward' normalizes audio.
+    direction == 'backward' unnormalizes audio.
+
+    NOTE: `direction == 'backward` is not thread-safe. Use with care.
+    """
+    def __init__(self, epsilon=1e-7):
+        super().__init__()
+        self.epsilon  = epsilon
+        self.mean = None
+        self.std = None
+
+    def forward(self, waveform, direction='forward'):
+        assert direction in ['forward', 'backward']
+        with torch.no_grad():
+            if direction == 'forward':
+                mean, std = waveform.mean(dim=[1, 2]) + self.epsilon, waveform.std(dim=[1, 2])
+                waveform = (waveform - std.unsqueeze(-1).unsqueeze(-1)) / mean.unsqueeze(-1).unsqueeze(-1)
+                self.mean, self.std = mean, std
+            else:
+                mean, std = self.mean, self.std
+                mean, std = mean.unsqueeze(-1).unsqueeze(-1), std.unsqueeze(-1).unsqueeze(-1)
+                waveform = waveform * mean + std
+        return waveform

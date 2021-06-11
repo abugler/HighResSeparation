@@ -20,14 +20,18 @@
         resume: null
         batch_size: 8
         minibatch_size: 8
+        optimizer: sgd
         learning_rate: .01
         momentum: .9
         weight_decay: .0005
+        autoclip: 10
         epochs: 100
         epoch_length: 100
         valid_epoch_length: null
         poly_power: .9
         num_workers: 8
+        optimizer: 'sgd'
+
         device: 'cuda:0'
     evaluate:
       flags:

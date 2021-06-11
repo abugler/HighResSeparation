@@ -7,3 +7,5 @@ from .evaluation import (evaluate,
                          dummy_signal,
                          Evaluator)
 from .resample import resample_batch
+
+from .autoclip import add_autoclip_gradient_handler

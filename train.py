@@ -37,6 +37,7 @@ minibatch_size = 8
 learning_rate = .01
 momentum = .9
 weight_decay = .0005
+autoclip = 0
 epochs = 100
 epoch_length = 100
 valid_epoch_length = None
@@ -120,10 +121,6 @@ resampler = tfa_transforms.Resample(
 if task == 'separation':
     sisdr = funcs.SISDR()
     recon_loss = funcs.ReconstructionLoss()
-if task == 'segmentation':
-    ce_loss = funcs.CrossEntropy()
-
-
 
 # Training Setup                        
 
@@ -171,9 +168,7 @@ def minibatches_loss(minibatches):
             }
 
         elif task == 'segmentation':
-            loss_dict = {
-                'loss': ce_loss(output, batch)
-            }
+            raise NotImplementedError("segmentation task not supported.")
         loss_dict['loss'].backward()
         for k, v in loss_dict.items():
             batch_loss_dict[k] = (v * batch['mix_audio'].shape[0] / batch_size
@@ -208,9 +203,7 @@ def val_step(engine, batch):
             }
 
         elif task == 'segmentation':
-            loss_dict = {
-                'loss': ce_loss(output, batch)
-            }
+            raise NotImplementedError("segmentation task not supported.")
     return dict_to_item(loss_dict)
 
 trainer, validator = nussl.ml.train.create_train_and_validation_engines(
@@ -254,6 +247,9 @@ def on_epoch_completed(engine):
             engine.state.epoch_history[key][-1], 
             engine.state.epoch
         )
+
+if 0 < autoclip < 100:
+    funcs.add_autoclip_gradient_handler(trainer, model, autoclip)
 
 max_iterations = epochs * epoch_length
 
