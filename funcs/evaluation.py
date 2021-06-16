@@ -25,7 +25,7 @@ class Evaluator(BSSEvalScale, BSSEvalV4):
                         estimates,
                         compute_sir_sar=True,
                         **kwargs):
-        breakpoint()
+
         scale_scores = BSSEvalScale.evaluate_helper(
             self,
             references,
@@ -92,11 +92,14 @@ def evaluate(
 
         evaluator.estimated_sources_list = estimates
         evaluator.true_sources_list = list(sources)
-        evaluator.source_labels = list(item['metadata']['labels'])
+        evaluator.source_labels = list(item['metadata']['labels'][0])
 
         file_name = f'{str(i).zfill(order_of_mag)}.json'
         pbar.set_description(file_name)
-        scores = evaluator.evaluate()
+        try:
+            scores = evaluator.evaluate()
+        except:
+            continue
         with open(output_folder / file_name, 'w') as f:
             json.dump(scores, f, indent=4)
         pbar.update()

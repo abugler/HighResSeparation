@@ -6,6 +6,7 @@
 
         dataset: openmic
         toy_dataset: False
+        sources: bdvo
 
         imagenet_pretrained: False
         closure_key: hrnet_w18_small_v2
@@ -16,6 +17,9 @@
         sample_rate: 22050
         stem: False
         skip: False
+        spec_norm: null
+        waveform_norm: null
+        binary_mask: False
 
         resume: null
         batch_size: 8

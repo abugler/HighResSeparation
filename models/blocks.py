@@ -21,7 +21,8 @@ class HRNetV2Skip(nn.Module):
                  width : int,
                  num_classes : int,
                  audio_channels : int,
-                 stem : bool
+                 stem : bool,
+                 binary_mask : bool = False
                  ):
         super().__init__()
         self.stem = stem
@@ -38,7 +39,8 @@ class HRNetV2Skip(nn.Module):
             nn.BatchNorm2d(width, momentum=_BN_MOMENTUM),
             nn.ReLU()
         )
-        self.layer2 = nn.Sequential(
+
+        layer2 = [
             nn.Conv2d(
                 in_channels=width + audio_channels,
                 out_channels=width,
@@ -51,9 +53,11 @@ class HRNetV2Skip(nn.Module):
                 out_channels=num_classes * audio_channels,
                 kernel_size=3,
                 stride=1,
-                padding=1),
-            nn.Sigmoid()
-        )
+                padding=1)
+        ]
+        if not binary_mask:
+            layer2.append(nn.Sigmoid())
+        self.layer2 = nn.Sequential(*layer2)
 
     def forward(self, x, spec):
 
@@ -73,7 +77,8 @@ class HRNetV2(nn.Module):
     def __init__(self,
                  width : int,
                  num_classes : int,
-                 stem : bool):
+                 stem : bool,
+                 binary_mask : bool):
         super().__init__()
         last_inp_channels = 15 * width
         self.stem = stem
@@ -89,15 +94,26 @@ class HRNetV2(nn.Module):
         )
         if stem:
             self.upsample = nn.Upsample(scale_factor=4.0)
-        self.layer2 = nn.Sequential(
+
+        layer2 = [
+            nn.Conv2d(
+                in_channels=width,
+                out_channels=width,
+                kernel_size=3,
+                stride=1,
+                padding=1),
+            nn.ReLU(),
             nn.Conv2d(
                 in_channels=width,
                 out_channels=num_classes,
                 kernel_size=3,
                 stride=1,
-                padding=1),
-            nn.Sigmoid()
-        )
+                padding=1)
+        ]
+        if not binary_mask:
+            layer2.append(nn.Sigmoid())
+        self.layer2 = nn.Sequential(*layer2)
+
 
     def forward(self, x):
         x = self.layer1(x)
@@ -179,12 +195,13 @@ class PeakNorm(WaveformNorm):
         assert direction in ['forward', 'backward']
         with torch.no_grad():
             if direction == 'forward':
-                peak = torch.max(torch.abs(waveform)) + epsilon
+                peak, _ = torch.max(torch.abs(waveform), dim=2, keepdim=True)
+                peak += self.epsilon
                 waveform = waveform / peak
                 waveform = waveform * self.max_val
                 self.peak = peak
             else:
-                peak = self.peak
+                peak = self.peak.unsqueeze(-1)
                 waveform = waveform / self.max_val
                 waveform =  waveform * peak
         return waveform
@@ -208,11 +225,36 @@ class WhiteningNorm(WaveformNorm):
         assert direction in ['forward', 'backward']
         with torch.no_grad():
             if direction == 'forward':
-                mean, std = waveform.mean(dim=[1, 2]) + self.epsilon, waveform.std(dim=[1, 2])
-                waveform = (waveform - std.unsqueeze(-1).unsqueeze(-1)) / mean.unsqueeze(-1).unsqueeze(-1)
+                mean, std = waveform.mean(dim=[1, 2], keepdim=True) + self.epsilon, waveform.std(dim=[1, 2], keepdim=True)
+                waveform = (waveform - std) / mean
                 self.mean, self.std = mean, std
             else:
+                # assume a source 
                 mean, std = self.mean, self.std
-                mean, std = mean.unsqueeze(-1).unsqueeze(-1), std.unsqueeze(-1).unsqueeze(-1)
+                mean, std = mean, std
                 waveform = waveform * mean + std
         return waveform
+
+class BoundSpectrogram(nn.Module):
+    """
+    Inspired by
+    https://ejhumphrey.com/assets/pdf/jansson2017singing.pdf
+
+    Bounds each spectrogram between [0, 1]. The highest value in each
+    spectrogram is set to 1, while the lowest value is set to 0.
+
+    This will not work well if the mix is silent.
+    """ 
+    def __init__(self, epsilon = 1e-7):
+        super().__init__()
+        self.epsilon = epsilon
+
+    def forward(self, x):
+        flattened_x = torch.flatten(x, start_dim=-2, end_dim=-1)
+        min, _ = torch.min(flattened_x, dim=-1, keepdim=True)
+        max, _ = torch.max(flattened_x, dim=-1, keepdim=True)
+        max += self.epsilon
+        min = min.unsqueeze(-1)
+        max = max.unsqueeze(-1)
+        return (x - min) / (max - min)
+

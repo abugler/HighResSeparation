@@ -4,12 +4,20 @@ from .mtg_jamendo import MTGJamendo
 
 ALIGN_CORNERS = None
 
+musdb_source_mapping = {
+    'b': 'bass',
+    'd': 'drums',
+    'o': 'other',
+    'v': 'vocals'
+}
+
 def build_musdb(evaluate : bool,
                 folder : str,
                 is_wav : bool,
                 excerpt_duration : float,
                 hop_duration : float,
                 num_tracks : int,
+                sources : str = None,
                 **kwargs):
     """
     Returns a train, validiation, and testing dataset for MUSDB
@@ -19,14 +27,15 @@ def build_musdb(evaluate : bool,
         [(['train'], 'train'),
         (['train'], 'valid')] if not evaluate else [(['test'], None)]
     )
-    
+    sources = 'bdov' if sources is None else sources
+    sources = [musdb_source_mapping[s] for s in sources]
     datasets = []
     for subsets, split in splits:
         datasets.append(
             SegmentedMUSDB(
                 folder, is_wav, excerpt_duration,
                 hop_duration, num_tracks,
-                subsets, split)
+                subsets, split, sources=sources)
         )
     return datasets
 

@@ -20,6 +20,7 @@ seed = 0
 
 dataset = 'musdb'
 toy_dataset = False
+sources = 'bdvo' # only valid for musdb
 
 imagenet_pretrained = False
 closure_key = 'hrnet_w18_small_v2'
@@ -30,6 +31,9 @@ window_type = 'sqrt_hann'
 sample_rate = 22_050
 stem = False
 skip = False
+spec_norm = None
+waveform_norm = None
+binary_mask = False
 
 resume = None
 batch_size = 8
@@ -48,6 +52,8 @@ optimizer = 'sgd'
 
 # Asserts
 assert batch_size >= minibatch_size
+# multiclass uses Cross Entropy loss, and this loss is not defined if a bucket does not belong to any source.
+assert not (binary_mask and len(sources) < 4)
 
 # Seeding
 torch.manual_seed(seed)
@@ -66,9 +72,8 @@ if dataset == 'musdb':
         kwargs = yaml.load(s)
     if toy_dataset:
         kwargs['num_tracks'] = 1
-    train_dataset, val_dataset = data.build_musdb(False, **kwargs)
+    train_dataset, val_dataset = data.build_musdb(False, **kwargs, sources=sources)
     if toy_dataset:
-        train_dataset.num_excerpts = 1
         val_dataset = train_dataset
 elif dataset == 'openmic':
     with open('.guild/sourcecode/data_conf/openmic_args.yml') as s:
@@ -90,7 +95,10 @@ model = models.HRNet(
     head=task,
     stem=stem,
     audio_channels=1,
-    skip=skip
+    skip=skip,
+    spec_norm=spec_norm,
+    waveform_norm=waveform_norm,
+    binary_mask=binary_mask
 ).to(device)
 
 if optimizer == 'sgd':

@@ -2,8 +2,11 @@ import nussl
 import musdb as musdb_sigsep
 import tqdm
 import numpy as np
+import librosa
 from collections import OrderedDict
 
+
+default_sources = ['bass', 'drums', 'other', 'vocals']
 class SegmentedMUSDB(nussl.datasets.BaseDataset):
     """
     FastLoadMUSDB is MUSDB, but does not load entire songs
@@ -22,19 +25,22 @@ class SegmentedMUSDB(nussl.datasets.BaseDataset):
         Distance in seconds between each start of the excerpt.
     num_tracks : int, optional
         Number of MUSDB tracks to use. Default is all of them.
-    nonsilent_sources : List[str], optional
-        If provided, and hop_duration is also provided, these sources are guarenteed
-        to not be silent in these sources.
-    
+    sources : list[str], optional
+        List of sources to separate. Default is ['bass', 'drums', 'other', 'vocals'].
     """
+    
     def __init__(self, folder='', is_wav=False, excerpt_duration=10, hop_duration=0,
-                 num_tracks=None, subsets=None, split=None, **kwargs):
+                 num_tracks=None, subsets=None, split=None, sources=None, 
+                 threshold_db=-45, **kwargs):
         self.sample_rate = 44_100
         self.excerpt_duration = excerpt_duration
         self.excerpt_length = int(self.sample_rate * excerpt_duration)
         self.hop_duration = hop_duration
         self.num_tracks = num_tracks
-        self.num_classes = 4
+        self.sources = default_sources if sources is None else sources
+        assert all([source in default_sources for source in self.sources])
+        self.num_classes = len(self.sources)
+        self.threshold_db = threshold_db
 
         subsets = ['train', 'test'] if subsets is None else subsets
         self.musdb = musdb_sigsep.DB(root=folder, is_wav=is_wav, download=False, 
@@ -52,12 +58,28 @@ class SegmentedMUSDB(nussl.datasets.BaseDataset):
         track = self.musdb[idx]
         self.cache_stems(track)
         mix, sources = nussl.utils.musdb_track_to_audio_signals(track)
-
-        return np.arange(
-            0, 
-            mix.signal_duration - self.excerpt_duration,
-            self.hop_duration
-        )
+        
+        if self.num_classes < 4:
+            starts = set()
+            for source in self.sources:
+                salient = set(
+                    find_salient_starts(
+                        sources[source].audio_data,
+                        self.excerpt_duration,
+                        self.hop_duration / self.excerpt_duration,
+                        sr=44_100,
+                        threshold_db=self.threshold_db
+                    ) / 44_100
+                )
+                starts = starts.union(salient)
+            starts = np.array(list(starts))
+        else:
+            starts = np.arange(
+                0, 
+                mix.signal_duration - self.excerpt_duration,
+                self.hop_duration
+            )
+        return starts
     
     def filter_tracks(self):
         self.musdb.tracks = sorted(self.musdb.tracks, key=lambda t: t.path)
@@ -122,7 +144,7 @@ class SegmentedMUSDB(nussl.datasets.BaseDataset):
     def process_item(self, item):
         mix, sources = self.musdb_track_to_audio_signals(item)
         self._setup_audio_signal(mix)
-        source_names = sorted(list(sources.keys()))
+        source_names = sorted(list(self.sources))
         source_audio = []
         for source_name in source_names:
             source = sources[source_name]
@@ -138,3 +160,15 @@ class SegmentedMUSDB(nussl.datasets.BaseDataset):
             }
         }
         return output
+
+def find_salient_starts(audio, duration_sec, hop_ratio, sr, threshold_db=-60.0):
+    # finds frames in the audio where the RMS is above a dB threshold
+    
+    dur = int(sr * duration_sec)
+    hop_dur = int(dur * hop_ratio)
+    threshold = np.power(10.0, threshold_db / 20.0)
+    rms = librosa.feature.rms(audio, frame_length=dur, hop_length=hop_dur)[0, :]
+    loud = np.squeeze(np.argwhere(rms > threshold))
+    fr = lambda t: np.atleast_1d(librosa.frames_to_samples(t,
+                                                           hop_length=hop_dur))
+    return fr(loud)

@@ -6,15 +6,28 @@ import torch.nn as nn
 ALIGN_CORNERS = None
 
 class ReconstructionLoss(nn.Module):
-    def __init__(self, **kwargs):
+    def __init__(self, multiclass : bool = True, **kwargs):
         super().__init__()
-        self.loss_func = nn.L1Loss(**kwargs)
+        self.multiclass = multiclass
+        if multiclass:
+            self.loss_func = nn.L1Loss(**kwargs)
+        else:
+            self.loss_func = nn.CrossEntropyLoss(**kwargs)
 
     def forward(self, output, batch, stft_function):
         with torch.no_grad():
             src_stft = stft_function(batch['source_audio'])
-            src_magnitude, _ = torch.split(src_stft, src_stft.shape[2] // 2, dim=2)
-        loss = self.loss_func(output['estimates'], src_magnitude)
+            gt, _ = torch.split(src_stft, src_stft.shape[2] // 2, dim=2)
+        if self.multiclass:
+            # This makes the ideal binary masks
+            _, gt_max_idx = gt.max(dim=-1)
+            for jdx in range(gt.shape[-1]):
+                idx = gt_max_idx == jdx
+                gt[..., jdx][idx] = 1
+                gt[..., jdx][~idx] = 0
+            loss = self.loss_func(output['masks'], gt)
+        else:
+            loss = self.loss_func(output['estimates'], gt)
         return loss
 
 

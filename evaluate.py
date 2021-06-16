@@ -22,6 +22,13 @@ class Bunch():
     def __init__(self, d : dict):
         self.__dict__.update(d)
 
+    def __getattribute__(self, name):
+        try:
+            return super().__getattribute__(name)
+        except:
+            self.__setattr__(name, None)
+        return super().__getattribute__(name)
+
 # This loads all the flags from training into a namespace.
 with open(os.path.join(train_path, '.guild/attrs/flags')) as f:
     train_config = yaml.safe_load(f)
@@ -29,9 +36,9 @@ with open(os.path.join(train_path, '.guild/attrs/flags')) as f:
 
 # Dataset
 if train_namespace.dataset == 'musdb':
-    with open('.guild/sourcecode/data_conf/musdb_args.yml') as s:
+    with open('.guild/sourcecode/data_conf/musdb_args_eval.yml') as s:
         kwargs = yaml.load(s)
-    test_dataset = data.build_musdb(True, **kwargs)[0]
+    test_dataset = data.build_musdb(True, **kwargs, sources=train_namespace.sources)[0]
 elif train_namespace.dataset == 'openmic':
     with open('.guild/sourcecode/data_conf/openmic_args.yml') as s:
         kwargs = yaml.load(s)
@@ -53,7 +60,10 @@ model = models.HRNet(
     head=train_namespace.task,
     stem=train_namespace.stem,
     audio_channels=1,
-    skip=train_namespace.skip
+    skip=train_namespace.skip,
+    spec_norm=train_namespace.spec_norm,
+    waveform_norm=train_namespace.waveform_form,
+    activation='sigmoid' if train_namespace.multiclass else 'softmax'
 ).to(device)
 
 state_dict = torch.load(model_path, map_location=device)

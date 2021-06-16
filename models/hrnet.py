@@ -10,7 +10,7 @@ from nussl.ml.networks.modules import STFT, AmplitudeToDB
 
 from timm.models.hrnet import HighResolutionNet, _BN_MOMENTUM, cfg_cls as HRNetConfigurations
 from timm.models.resnet import Bottleneck
-from .blocks import HRNetV2Skip, HRNetV2, StemEncoder, SpecEncoder, PeakNorm, WhiteningNorm
+from .blocks import HRNetV2Skip, HRNetV2, StemEncoder, SpecEncoder, PeakNorm, WhiteningNorm, BoundSpectrogram
 
 ALIGN_CORNERS = None
 
@@ -60,10 +60,12 @@ class HRNet(nn.Module):
         feature map before the final convolution.
     spec_norm : str
         Specifies normalization to be done on the spectrogram.
-        Can be None, 'batch', or 'instance'. Default: None
+        Can be None, 'batch', 'instance', or 'bound'. Default: None
     waveform_norm : str
         Specifies normalization to be done on the waveform.
         Can be None, 'peak', or 'whitening'.
+    binary_mask : bool
+        If True, output masks for optimizing with CrossEntropy. Otherwise, output soft masks.
     """
     def __init__(self,
                  closure_key : str,
@@ -75,7 +77,8 @@ class HRNet(nn.Module):
                  audio_channels : int = 1,
                  skip : bool = False,
                  spec_norm : str = None,
-                 waveform_norm : str = None):
+                 waveform_norm : str = None,
+                 binary_mask : bool = False):
         super().__init__()
 
         if not (waveform_norm is None or spec_norm is None):
@@ -84,6 +87,9 @@ class HRNet(nn.Module):
         self.num_classes = num_classes
         self.audio_channels = audio_channels
         self.skip = skip
+        self.binary_mask = binary_mask
+        if binary_mask:
+            self.softmax = nn.Softmax(dim=-1)
 
         # Load and edit configuration
         hrnet_config = HRNetConfigurations[closure_key]
@@ -126,10 +132,16 @@ class HRNet(nn.Module):
                     width,
                     num_classes,
                     audio_channels,
-                    stem
+                    stem,
+                    binary_mask=binary_mask
                 )
             else:
-                self.hrnet.final_layer = HRNetV2(width, num_classes, stem)
+                self.hrnet.final_layer = HRNetV2(
+                    width,
+                    num_classes,
+                    stem,
+                    binary_mask=binary_mask
+                )
         elif head == 'classification':
             self.sigmoid = nn.Sigmoid()
         else:
@@ -146,6 +158,8 @@ class HRNet(nn.Module):
             self.spec_norm = nn.BatchNorm2d(audio_channels)
         elif spec_norm == 'instance':
             self.spec_norm = nn.InstanceNorm2d(audio_channels)
+        elif spec_norm == 'bound':
+            self.spec_norm = BoundSpectrogram()
         else:
             self.spec_norm = None
 
@@ -213,6 +227,7 @@ class HRNet(nn.Module):
         data = self.amplitude_to_db(magnitude).permute(0, 3, 2, 1)
         if self.spec_norm is not None:
             data = self.spec_norm(data)
+        
         return data, magnitude, phase
 
     def masks_and_audio(self, magnitude, phase, out):
@@ -220,6 +235,8 @@ class HRNet(nn.Module):
         num_freqs = self.stft_params.window_length // 2 + 1
         out = torch.reshape(out, (batch, self.num_classes, self.audio_channels,
                             num_freqs, num_frames))
+        if self.binary_mask:
+            out = self.softmax(out)
         masks = out.permute(0, 4, 3, 2, 1)
         # masks: (batch, num_frames, num_freqs, audio_channels, num_classes)
         estimates = magnitude.unsqueeze(-1) * masks
