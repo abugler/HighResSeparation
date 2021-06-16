@@ -9,16 +9,23 @@ from collections import OrderedDict
 default_sources = ['bass', 'drums', 'other', 'vocals']
 class SegmentedMUSDB(nussl.datasets.BaseDataset):
     """
-    FastLoadMUSDB is MUSDB, but does not load entire songs
-    when __getitem__ is called, but instead returns a small segment of the song.
-    This is different from using the GetExcerpt transform, since the usage of
-    GetExcerpt requires that the entire audio array is loaded into memory.
-    This is effective at reducing disk read times on machines with
-    slower disk read times.
+    SegmentedMUSDB is a dataset than indexes excerpt of tracks from MUSDB, rather than tracks, like the nussl MUSDB18 dataset.
+
+    For example:
+    >>> dataset = SegmentedMUSDB(*args **kwargs)
+    >>> item1 = dataset[0]
+    >>> item2 = dataset[1]
+
+    `item1` and `item2` may be from the same track, but they will contain audio data from different parts of the track.
+
+    If `sources` differs from the default, then only excerpts that contain at least one active source will be included.
+
     Parameters
     ----------
     folder : str
         Root folder for musdb dataset.
+    is_wav : bool, optional
+        Expect wav files rather than stems. Default: False
     excerpt_duration : float
         Excerpt Length in seconds.
     hop_duration : float
@@ -27,9 +34,10 @@ class SegmentedMUSDB(nussl.datasets.BaseDataset):
         Number of MUSDB tracks to use. Default is all of them.
     sources : list[str], optional
         List of sources to separate. Default is ['bass', 'drums', 'other', 'vocals'].
+    threshold_db : float, options
     """
     
-    def __init__(self, folder='', is_wav=False, excerpt_duration=10, hop_duration=0,
+    def __init__(self, folder='', is_wav=False, excerpt_duration=10, hop_duration=5,
                  num_tracks=None, subsets=None, split=None, sources=None, 
                  threshold_db=-45, **kwargs):
         self.sample_rate = 44_100
@@ -51,6 +59,9 @@ class SegmentedMUSDB(nussl.datasets.BaseDataset):
         self.metadata['split'] = split
 
     def cache_stems(self, track):
+        """
+        Stems are held in memory for fast loading.
+        """
         track._stems = [src.copy() for src in track.stems.astype(np.float32)]
         track._audio = track.stems[0]
 
@@ -111,8 +122,9 @@ class SegmentedMUSDB(nussl.datasets.BaseDataset):
         """
         Returns (`musdb_item`, `excerpt_idx`), such that
         self.excerpts[musdb_item][excerpt_idx] gets the first sample for the
-        segment referred to by item.
-        This is used during evaluation, to ensure that every excerpt is evaluated over once.
+        excerpt referred to by item.
+
+        This is especially useful during evaluation, to ensure that every excerpt is evaluated over once.
         """
         musdb_item = -1
         keys = self.excerpt_mappings.keys()
