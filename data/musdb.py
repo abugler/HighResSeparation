@@ -9,7 +9,7 @@ from collections import OrderedDict
 default_sources = ['bass', 'drums', 'other', 'vocals']
 class SegmentedMUSDB(nussl.datasets.BaseDataset):
     """
-    SegmentedMUSDB is a dataset than indexes excerpt of tracks from MUSDB, rather than tracks, like the nussl MUSDB18 dataset.
+    SegmentedMUSDB is a dataset than indexes excerpts of tracks from MUSDB, rather than tracks, like the nussl MUSDB18 dataset.
 
     For example:
     >>> dataset = SegmentedMUSDB(*args **kwargs)
@@ -34,7 +34,11 @@ class SegmentedMUSDB(nussl.datasets.BaseDataset):
         Number of MUSDB tracks to use. Default is all of them.
     sources : list[str], optional
         List of sources to separate. Default is ['bass', 'drums', 'other', 'vocals'].
-    threshold_db : float, options
+    threshold_db : float, optional
+        Silence threshold in dB for detecting active sources. Default=-45
+    **kwargs, split : str, subsets : str
+        See https://sigsep.github.io/sigsep-mus-db/#module-musdb
+
     """
     
     def __init__(self, folder='', is_wav=False, excerpt_duration=10, hop_duration=5,
